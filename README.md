@@ -62,13 +62,6 @@ If credentials are missing, upload is blocked until set in settings.
 3. If secure storage is unavailable on a system, local settings storage is used as fallback.
 4. Recommended: use a dedicated Streamable account for this plugin only.
 
-## Optional Test Mode
-
-Setting: Clear Credentials On Disable
-
-1. Off (default): better daily usability.
-2. On: useful for repeatedly testing first-run behavior.
-
 ## Troubleshooting
 
 1. Plugin settings are blank or missing fields.
