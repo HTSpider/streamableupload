@@ -94,11 +94,3 @@ Fix: run pnpm via pnpm.cmd:
 9. Changes do not appear after building.
 Fix: copy dist output to AppData Vencord dist (Windows setup), then fully restart Discord.
 
-## Share Checklist
-
-When sharing with others, include:
-1. This folder at src/userplugins/fileShare.
-2. This README.
-3. Exact build command for their OS.
-4. Reminder to restart Discord fully after build.
-5. First-run credential setup steps.
