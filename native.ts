@@ -4,131 +4,117 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-export async function uploadFileToGofileNative(_, url: string, fileBuffer: ArrayBuffer, fileName: string, fileType: string, token?: string): Promise<string> {
+const STREAMABLE_POLL_INTERVAL_MS = 5000;
+const STREAMABLE_MAX_WAIT_MS = 10 * 60 * 1000;
+
+function getSafeStorage() {
     try {
-        const formData = new FormData();
-
-        const file = new Blob([fileBuffer], { type: fileType });
-        formData.append("file", new File([file], fileName));
-
-        if (token) {
-            formData.append("token", token);
-        }
-
-        const options: RequestInit = {
-            method: "POST",
-            body: formData,
-        };
-
-        const response = await fetch(url, options);
-        const result = await response.json();
-        return result;
-    } catch (error) {
-        console.error("Error during fetch request:", error);
-        throw error;
+        const electron = require("electron");
+        return electron?.safeStorage;
+    } catch {
+        return null;
     }
 }
 
-
-
-export async function uploadFileToCatboxNative(_, url: string, fileBuffer: ArrayBuffer, fileName: string, fileType: string, userHash: string): Promise<string> {
-    try {
-        const formData = new FormData();
-        formData.append("reqtype", "fileupload");
-
-        const file = new Blob([fileBuffer], { type: fileType });
-        formData.append("fileToUpload", new File([file], fileName));
-
-        formData.append("userhash", userHash);
-
-        const options: RequestInit = {
-            method: "POST",
-            body: formData,
-        };
-
-        const response = await fetch(url, options);
-        const result = await response.text();
-        return result;
-    } catch (error) {
-        console.error("Error during fetch request:", error);
-        throw error;
-    }
+function isSecureStorageAvailable(): boolean {
+    const safeStorage = getSafeStorage();
+    return Boolean(safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable());
 }
 
-export async function uploadFileToLitterboxNative(_, fileBuffer: ArrayBuffer, fileName: string, fileType: string, time: string): Promise<string> {
-    try {
-        const formData = new FormData();
-
-        formData.append("reqtype", "fileupload");
-
-        const file = new Blob([fileBuffer], { type: fileType });
-        formData.append("fileToUpload", new File([file], fileName));
-
-        formData.append("time", time);
-
-        const options: RequestInit = {
-            method: "POST",
-            body: formData,
-        };
-
-        const response = await fetch("https://litterbox.catbox.moe/resources/internals/api.php", options);
-        const result = await response.text();
-        return result;
-    } catch (error) {
-        console.error("Error during fetch request:", error);
-        throw error;
-    }
+function wait(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export async function uploadFileCustomNative(_, url: string, fileBuffer: ArrayBuffer, fileName: string, fileType: string, fileFormName: string, customArgs: Record<string, string>, customHeaders: Record<string, string>, responseType: string, urlPath: string[]): Promise<string> {
-    try {
-        const formData = new FormData();
+function getShortcode(uploadResponse: any): string | null {
+    const shortcode = uploadResponse?.shortcode || uploadResponse?.data?.shortcode;
+    return typeof shortcode === "string" && shortcode.length > 0 ? shortcode : null;
+}
 
-        const file = new Blob([fileBuffer], { type: fileType });
-        formData.append(fileFormName, new File([file], fileName));
+async function waitForStreamableProcessing(shortcode: string, authHeader: string): Promise<void> {
+    const startedAt = Date.now();
 
-        for (const [key, value] of Object.entries(customArgs)) {
-            formData.append(key, value);
-        }
-
-        delete customHeaders["Content-Type"];
-
-        const headers = new Headers(customHeaders);
-
-        const uploadResponse = await fetch(url, {
-            method: "POST",
-            body: formData,
-            headers: headers
+    while (Date.now() - startedAt < STREAMABLE_MAX_WAIT_MS) {
+        const statusResponse = await fetch(`https://api.streamable.com/videos/${shortcode}`, {
+            method: "GET",
+            headers: {
+                Authorization: authHeader
+            }
         });
 
-        if (!uploadResponse.ok) {
-            throw new Error(`HTTP error! status: ${uploadResponse.status}, statusText: ${uploadResponse.statusText}`);
+        if (!statusResponse.ok) {
+            throw new Error(`STREAMABLE_STATUS_HTTP_${statusResponse.status}`);
         }
 
-        let uploadResult;
-        if (responseType === "JSON") {
-            uploadResult = await uploadResponse.json();
-        } else {
-            uploadResult = await uploadResponse.text();
+        const statusJson = await statusResponse.json();
+        const status = Number(statusJson?.status);
+
+        if (status === 2) {
+            return;
         }
 
-        let finalUrl = "";
-        if (responseType === "JSON") {
-            let current = uploadResult;
-            for (const key of urlPath) {
-                if (current[key] === undefined) {
-                    throw new Error(`Invalid URL path: ${urlPath.join(".")}`);
-                }
-                current = current[key];
-            }
-            finalUrl = current;
-        } else {
-            finalUrl = uploadResult.trim();
+        if (status >= 3 || status < 0) {
+            throw new Error(`STREAMABLE_PROCESSING_FAILED_${status}`);
         }
 
-        return finalUrl;
+        await wait(STREAMABLE_POLL_INTERVAL_MS);
+    }
+
+    throw new Error("STREAMABLE_PROCESSING_TIMEOUT");
+}
+
+export async function uploadFileToStreamableNative(_, fileBuffer: ArrayBuffer, fileName: string, fileType: string, email: string, password: string): Promise<any> {
+    try {
+        const formData = new FormData();
+        const file = new Blob([fileBuffer], { type: fileType || "application/octet-stream" });
+        formData.append("file", new File([file], fileName));
+
+        const basicAuth = Buffer.from(`${email}:${password}`).toString("base64");
+        const authHeader = `Basic ${basicAuth}`;
+        const response = await fetch("https://api.streamable.com/upload", {
+            method: "POST",
+            headers: {
+                Authorization: authHeader
+            },
+            body: formData
+        });
+
+        if (!response.ok) {
+            throw new Error(`STREAMABLE_UPLOAD_HTTP_${response.status}`);
+        }
+
+        const uploadJson = await response.json();
+        const shortcode = getShortcode(uploadJson);
+
+        if (!shortcode) {
+            throw new Error("STREAMABLE_SHORTCODE_MISSING");
+        }
+
+        await waitForStreamableProcessing(shortcode, authHeader);
+        return { ...uploadJson, shortcode };
     } catch (error) {
-        console.error("Error during fetch request:", error);
+        console.error("Error during Streamable upload:", error);
         throw error;
     }
+}
+
+export async function encryptSecretNative(_, plaintext: string): Promise<string> {
+    if (!plaintext) return "";
+    if (!isSecureStorageAvailable()) {
+        throw new Error("SECURE_STORAGE_UNAVAILABLE");
+    }
+
+    const safeStorage = getSafeStorage();
+    const encrypted = safeStorage.encryptString(plaintext);
+    return Buffer.from(encrypted).toString("base64");
+}
+
+export async function decryptSecretNative(_, encryptedBase64: string): Promise<string> {
+    if (!encryptedBase64) return "";
+    if (!isSecureStorageAvailable()) {
+        throw new Error("SECURE_STORAGE_UNAVAILABLE");
+    }
+
+    const safeStorage = getSafeStorage();
+    const encryptedBuffer = Buffer.from(encryptedBase64, "base64");
+    return safeStorage.decryptString(encryptedBuffer);
 }
