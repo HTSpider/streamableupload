@@ -71,28 +71,35 @@ Setting: Clear Credentials On Disable
 
 ## Troubleshooting
 
-1. Settings fields do not appear:
-1. fully restart Discord (including tray)
-2. confirm plugin name is StreamableUpload
+1. Plugin settings are blank or missing fields.
+Fix: fully quit Discord (including tray), then reopen. Confirm the plugin shown in settings is StreamableUpload.
 
-2. Streamable login failed (401):
-1. re-check email/password in plugin settings
-2. test logging in to Streamable in browser
+2. Upload says credentials are required.
+Fix: open StreamableUpload settings and fill Streamable Email and Streamable Password, then try again.
 
-3. Streamable blocked request (403):
-1. account may need verification/permissions
-2. retry later or check account status
+3. Streamable login failed (401).
+Fix: re-enter email/password carefully, save, and test logging in to Streamable in browser with the same credentials.
 
-4. Upload rejected (400):
-1. try another file
-2. reduce file size or re-encode
+4. Streamable blocked request (403).
+Fix: check Streamable account status/verification, then retry later. Some accounts may be temporarily restricted.
 
-5. Processing timeout/failure:
-1. wait and retry
-2. test with shorter MP4 clip first
+5. Upload rejected (400).
+Fix: try a different file. If it still fails, reduce size or re-encode to MP4 (H.264/AAC).
 
-6. Build command fails on Windows with script policy:
-1. use pnpm.cmd path as shown above
+6. Upload keeps running then fails or times out.
+Fix: wait a bit and retry. Large videos can take time to process. Test with a short MP4 clip first.
+
+7. Link is not sent immediately after upload.
+Expected behavior: this plugin waits until Streamable processing is complete before posting the final link.
+
+8. Build fails on Windows due to script policy.
+Fix: run pnpm via pnpm.cmd:
+```powershell
+& "$env:APPDATA\npm\pnpm.cmd" build
+```
+
+9. Changes do not appear after building.
+Fix: copy dist output to AppData Vencord dist (Windows setup), then fully restart Discord.
 
 ## Share Checklist
 
