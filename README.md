@@ -6,9 +6,6 @@ Features:
 1. Adds an attach-menu action: Upload File Up to 250 MB.
 2. Adds /fileupload slash command support.
 3. Waits until Streamable processing finishes before posting the link.
-4. First-run requires credentials from settings (no popup prompts).
-5. Password field is masked in settings.
-6. Encrypted password storage is used when OS secure storage is available.
 
 ## Requirements
 
