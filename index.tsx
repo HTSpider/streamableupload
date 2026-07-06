@@ -17,6 +17,7 @@ import { DraftType, Menu, PermissionsBits, PermissionStore, SelectedChannelStore
 const Native = VencordNative.pluginHelpers.StreamableUpload as PluginNative<typeof import("./native")>;
 
 const UploadStore = findByPropsLazy("getUploads");
+const DraftManager = findByPropsLazy("clearDraft", "saveDraft");
 let hasWarnedNoSecureStorage = false;
 
 const settings = definePluginSettings({
@@ -77,6 +78,41 @@ function formatFileSize(bytes: number): string {
 
 const UPLOAD_STILL_RUNNING_MS = 15000;
 const UPLOAD_TIMEOUT_MS = 600000;
+const MAX_UPLOAD_SIZE_BYTES = 250 * 1024 * 1024;
+const FILE_UPLOAD_FAILED_TOAST = "File Upload Failed";
+const GENERIC_UPLOAD_FAILURE_MESSAGE = "**Unable to upload file to Streamable.** Check credentials and console for more info.";
+
+function clearUploadDrafts(channelId: string) {
+    UploadManager.clearAll(channelId, DraftType.SlashCommand);
+    UploadManager.clearAll(channelId, DraftType.ChannelMessage);
+}
+
+function clearTextDrafts(channelId: string) {
+    try {
+        DraftManager.clearDraft(channelId, DraftType.SlashCommand);
+    } catch { }
+
+    try {
+        DraftManager.clearDraft(channelId, DraftType.ChannelMessage);
+    } catch { }
+}
+
+function notifyUploadLimitExceeded(file: File, channelId: string) {
+    const maxSize = formatFileSize(MAX_UPLOAD_SIZE_BYTES);
+    const actualSize = formatFileSize(file.size);
+
+    showToast(`Upload blocked: Free Streamable accounts are limited to ${maxSize}. ${file.name} is ${actualSize}.`, Toasts.Type.FAILURE);
+    sendBotMessage(channelId, {
+        content: `**Upload blocked.** Free Streamable accounts are limited to ${maxSize}. ${file.name} is ${actualSize}, so it cannot be uploaded.`
+    });
+    clearUploadDrafts(channelId);
+}
+
+function failUpload(channelId: string, message: string = GENERIC_UPLOAD_FAILURE_MESSAGE) {
+    showToast(FILE_UPLOAD_FAILED_TOAST, Toasts.Type.FAILURE);
+    sendBotMessage(channelId, { content: message });
+    clearUploadDrafts(channelId);
+}
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     let timeoutHandle: ReturnType<typeof setTimeout>;
@@ -96,7 +132,7 @@ async function resolveFile(options: Argument[], ctx: CommandContext): Promise<Fi
     for (const opt of options) {
         if (opt.name === "file") {
             const upload = UploadStore.getUpload(ctx.channel.id, opt.name, DraftType.SlashCommand);
-            return upload.item.file;
+            return upload?.item?.file ?? null;
         }
     }
     return null;
@@ -154,7 +190,7 @@ async function uploadFileToStreamable(file: File, channelId: string): Promise<bo
     try {
         const credentials = await ensureStreamableCredentials(channelId);
         if (!credentials) {
-            UploadManager.clearAll(channelId, DraftType.SlashCommand);
+            clearUploadDrafts(channelId);
             return false;
         }
 
@@ -166,15 +202,13 @@ async function uploadFileToStreamable(file: File, channelId: string): Promise<bo
 
         if (shortcode) {
             const finalUrl = `https://streamable.com/${shortcode}`;
-            setTimeout(() => sendTextToChat(`${finalUrl}`), 10);
+            setTimeout(() => sendTextToChat(finalUrl), 10);
             showToast("File processed and ready!", Toasts.Type.SUCCESS);
-            UploadManager.clearAll(channelId, DraftType.SlashCommand);
+            clearUploadDrafts(channelId);
             return true;
         } else {
             console.error("Unable to upload file to Streamable.", uploadResult);
-            showToast("File Upload Failed", Toasts.Type.FAILURE);
-            sendBotMessage(channelId, { content: "**Unable to upload file to Streamable.** Check credentials and console for more info." });
-            UploadManager.clearAll(channelId, DraftType.SlashCommand);
+            failUpload(channelId);
             return false;
         }
     } catch (error) {
@@ -192,15 +226,20 @@ async function uploadFileToStreamable(file: File, channelId: string): Promise<bo
         } else if (errorMessage.includes("STREAMABLE_PROCESSING_FAILED_")) {
             sendBotMessage(channelId, { content: "**Streamable failed to process this video.** Try a different file or re-encode it." });
         } else {
-            sendBotMessage(channelId, { content: "**Unable to upload file to Streamable.** Check credentials and console for more info." });
+            sendBotMessage(channelId, { content: GENERIC_UPLOAD_FAILURE_MESSAGE });
         }
-        showToast("File Upload Failed", Toasts.Type.FAILURE);
-        UploadManager.clearAll(channelId, DraftType.SlashCommand);
+        showToast(FILE_UPLOAD_FAILED_TOAST, Toasts.Type.FAILURE);
+        clearUploadDrafts(channelId);
         return false;
     }
 }
 
 async function uploadFile(file: File, channelId: string) {
+    if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+        notifyUploadLimitExceeded(file, channelId);
+        return;
+    }
+
     showToast(`Uploading ${file.name} (${formatFileSize(file.size)}) via Streamable...`, Toasts.Type.MESSAGE);
 
     const stillUploadingHandle = setInterval(() => {
@@ -213,11 +252,11 @@ async function uploadFile(file: File, channelId: string) {
         if (error instanceof Error && error.message === "UPLOAD_TIMEOUT") {
             showToast("Upload timed out after 10 minutes. Try again.", Toasts.Type.FAILURE);
             sendBotMessage(channelId, { content: "**Upload timed out.** Try again or use a smaller file." });
-            UploadManager.clearAll(channelId, DraftType.SlashCommand);
+            clearUploadDrafts(channelId);
         } else {
             console.error("Unexpected upload error:", error);
             showToast("Unexpected upload error.", Toasts.Type.FAILURE);
-            UploadManager.clearAll(channelId, DraftType.SlashCommand);
+            clearUploadDrafts(channelId);
         }
     } finally {
         clearInterval(stillUploadingHandle);
@@ -236,6 +275,11 @@ function triggerFileUpload() {
                 const file = target.files[0];
                 if (file) {
                     const channelId = SelectedChannelStore.getChannelId();
+                    if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+                        notifyUploadLimitExceeded(file, channelId);
+                        return;
+                    }
+
                     showToast(`Selected ${file.name}. Starting upload...`, Toasts.Type.MESSAGE);
                     await uploadFile(file, channelId);
                 } else {
@@ -307,11 +351,14 @@ export default definePlugin({
             ],
             execute: async (opts, cmdCtx) => {
                 const file = await resolveFile(opts, cmdCtx);
+                // Clear slash UI immediately after Enter so command text + attachment do not linger.
+                clearTextDrafts(cmdCtx.channel.id);
+                clearUploadDrafts(cmdCtx.channel.id);
+
                 if (file) {
                     await uploadFile(file, cmdCtx.channel.id);
                 } else {
                     sendBotMessage(cmdCtx.channel.id, { content: "No file specified!" });
-                    UploadManager.clearAll(cmdCtx.channel.id, DraftType.SlashCommand);
                 }
             },
         },

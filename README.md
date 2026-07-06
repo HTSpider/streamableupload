@@ -2,10 +2,21 @@
 
 Upload files to Streamable from Discord and post the generated link automatically.
 
+Current version: v1.1.0
+
 Features:
 1. Adds an attach-menu action: Upload File Up to 250 MB.
 2. Adds /fileupload slash command support.
 3. Waits until Streamable processing finishes before posting the link.
+
+## Changelog
+
+### v1.1.0
+1. Added strict 250 MB upload limit handling with clear user-facing errors.
+2. Added immediate oversized file rejection at file selection time.
+3. Improved slash command draft cleanup so attachments clear reliably.
+4. Added explicit draft-text cleanup for `/fileupload` command submission.
+5. Refactored upload error handling to reduce duplicated strings and improve maintainability.
 
 ## Requirements
 
