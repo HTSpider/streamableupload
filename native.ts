@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-const STREAMABLE_POLL_INTERVAL_MS = 5000;
 const STREAMABLE_MAX_WAIT_MS = 10 * 60 * 1000;
+const STREAMABLE_PROCESSING_POLL_SCHEDULE_MS = [1000, 1500, 2000, 3000, 5000];
+const STREAMABLE_PUBLIC_READY_POLL_SCHEDULE_MS = [500, 1000, 1500, 2000, 3000];
 
 function getSafeStorage() {
     try {
@@ -30,8 +31,19 @@ function getShortcode(uploadResponse: any): string | null {
     return typeof shortcode === "string" && shortcode.length > 0 ? shortcode : null;
 }
 
+function hasPublicEmbedMetadata(html: string): boolean {
+    return html.includes('property="og:video"')
+        && html.includes('property="og:image"')
+        && html.includes('name="twitter:player"');
+}
+
+function getPollDelay(schedule: number[], attempt: number): number {
+    return schedule[Math.min(attempt, schedule.length - 1)];
+}
+
 async function waitForStreamableProcessing(shortcode: string, authHeader: string): Promise<void> {
     const startedAt = Date.now();
+    let attempt = 0;
 
     while (Date.now() - startedAt < STREAMABLE_MAX_WAIT_MS) {
         const statusResponse = await fetch(`https://api.streamable.com/videos/${shortcode}`, {
@@ -56,10 +68,37 @@ async function waitForStreamableProcessing(shortcode: string, authHeader: string
             throw new Error(`STREAMABLE_PROCESSING_FAILED_${status}`);
         }
 
-        await wait(STREAMABLE_POLL_INTERVAL_MS);
+        await wait(getPollDelay(STREAMABLE_PROCESSING_POLL_SCHEDULE_MS, attempt));
+        attempt++;
     }
 
     throw new Error("STREAMABLE_PROCESSING_TIMEOUT");
+}
+
+async function waitForPublicEmbedReadiness(shortcode: string): Promise<void> {
+    const startedAt = Date.now();
+    let attempt = 0;
+
+    while (Date.now() - startedAt < STREAMABLE_MAX_WAIT_MS) {
+        const pageResponse = await fetch(`https://streamable.com/${shortcode}`, {
+            method: "GET",
+            headers: {
+                "User-Agent": "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discord.com)"
+            }
+        });
+
+        if (pageResponse.ok) {
+            const pageHtml = await pageResponse.text();
+            if (hasPublicEmbedMetadata(pageHtml)) {
+                return;
+            }
+        }
+
+        await wait(getPollDelay(STREAMABLE_PUBLIC_READY_POLL_SCHEDULE_MS, attempt));
+        attempt++;
+    }
+
+    throw new Error("STREAMABLE_PUBLIC_EMBED_TIMEOUT");
 }
 
 export async function uploadFileToStreamableNative(_, fileBuffer: ArrayBuffer, fileName: string, fileType: string, email: string, password: string): Promise<any> {
@@ -90,6 +129,7 @@ export async function uploadFileToStreamableNative(_, fileBuffer: ArrayBuffer, f
         }
 
         await waitForStreamableProcessing(shortcode, authHeader);
+        await waitForPublicEmbedReadiness(shortcode);
         return { ...uploadJson, shortcode };
     } catch (error) {
         console.error("Error during Streamable upload:", error);

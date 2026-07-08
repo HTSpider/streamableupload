@@ -2,14 +2,18 @@
 
 Upload files to Streamable from Discord and post the generated link automatically.
 
-Current version: v1.1.0
+Current version: v1.2.0
 
 Features:
 1. Adds an attach-menu action: Upload File Up to 250 MB.
 2. Adds /fileupload slash command support.
-3. Waits until Streamable processing finishes before posting the link.
+3. Waits until Streamable processing and public embed readiness finish before posting the link.
 
 ## Changelog
+
+### v1.2.0
+1. Added a public embed-readiness check so Streamable links are sent only after Discord can reliably unfurl them.
+2. Tuned the wait loop with faster early polling to reduce dead time while keeping embed reliability.
 
 ### v1.1.0
 1. Added strict 250 MB upload limit handling with clear user-facing errors.
@@ -94,7 +98,7 @@ Fix: try a different file. If it still fails, reduce size or re-encode to MP4 (H
 Fix: wait a bit and retry. Large videos can take time to process. Test with a short MP4 clip first.
 
 7. Link is not sent immediately after upload.
-Expected behavior: this plugin waits until Streamable processing is complete before posting the final link.
+Expected behavior: this plugin waits until Streamable processing completes and the public page exposes Discord-friendly embed metadata before posting the final link.
 
 8. Build fails on Windows due to script policy.
 Fix: run pnpm via pnpm.cmd:
